@@ -27,12 +27,14 @@ app = dash.Dash(__name__, meta_tags=[{"name": "viewport", "content": "width=devi
 server = app.server
 
 colors = {
-    'background': '#082255',
-    'text': ' 	#FFFFF'
+    'background': '#FFFFF',
+    'text': '#082255'
 }
 
-app.layout = html.Div(style={'backgroundColor': colors['background']},children=[
-    html.H1(children='Consommations temps réel par région et par filière', style={'textAlign':'center'}),
+app.layout = html.Div(
+    #style={'backgroundColor': colors['background']},
+    children=[
+    html.H1(children='Real-time consumption and production by region and sector', style={'textAlign':'center'}),
     dcc.Dropdown(df.region.unique(), 'Auvergne-Rhône-Alpes', id='dropdown-selection'),
     dcc.Graph(id='graph-content')
 ])
