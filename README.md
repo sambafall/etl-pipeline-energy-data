@@ -19,7 +19,8 @@ For more information, follow this link: https://odre.opendatasoft.com/explore/da
 ## Table of contents
 
 - [Installation](#installation)
-- [Quick start](#quick-start)
+- [Run airflow and manage the dags](#Manage-tasks)
+- [Visualize the data](#Visualize-data)
 - [Contributing](#contributing)
 - [Copyright and license](#copyright-and-license)
 
@@ -38,6 +39,13 @@ To install the project environment just run the following command:
 docker-compose up
 ```
 
+On code change you might need to run these commands:
+```
+docker-compose down
+docker-compose up -d --build
+```
+
+## Running airflow and managing dags
 Once the installation completed, open AirFlow's web UI:
 ```
 http://localhost:8080/login
@@ -47,9 +55,9 @@ Use these credentials to login:
 - login: airflow
 - pwd: airflow
 
-
-## Quick start
 Click on the DAGS button then activate the "process-energy" dag and click on the play icon to trigger manually the dag. 
+
+## Visualize the data
 Once the dag has ran successfully, open the dashboard to visualize the data:
 ```
 http://localhost:8000
