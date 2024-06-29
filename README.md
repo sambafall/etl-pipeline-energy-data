@@ -45,6 +45,13 @@ docker-compose down
 docker-compose up -d --build
 ```
 
+If ```docker-compose up``` command keeps failing you may need to run this line before retrying:
+
+```docker-compose down --volumes --rmi all```
+
+You can force docker to recreate images without using local cache:
+```docker-compose up --force-recreate```
+
 ## Running airflow and managing dags
 Once the installation completed, open AirFlow's web UI:
 ```
