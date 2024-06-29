@@ -53,7 +53,9 @@ def process_energy_data():
                                             'hydraulique_mw', 'pompage_mw', 'bioénergies_mw'],
                                 value_name='consommation',
                                 var_name='filiere')
+        df_normalized = df_normalized.loc[(df_normalized['filiere'].isin(['eolien_mw', 'solaire_mw','hydraulique_mw'])), :]        
         return df_normalized
+    
     @task()
     def load(data):
         engine = sqlalchemy.create_engine('postgresql+psycopg2://airflow:airflow@postgres:5432/airflow')
@@ -69,7 +71,7 @@ def process_energy_data():
                 if_exists='replace',
                 index=False,
                 method='multi',
-                chunksize=5000,
+                chunksize=100000,
             )
             engine.dispose()
             print(f"Storage of energy data completed !!!")
