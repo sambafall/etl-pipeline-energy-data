@@ -4,14 +4,39 @@ import os
 import pandas as pd
 import sqlalchemy
 import time
-import csv
-import urllib.request
-import asyncio
 
 from airflow.decorators import dag, task
-from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.providers.postgres.operators.postgres import PostgresOperator
 from sqlalchemy.exc import SQLAlchemyError
+from config.constants import (
+    ENERGY_SOURCES,
+    RENEWABLE_SOURCES,
+    RAW_COLUMNS,
+    DB_SCHEMA,
+    DB_TABLE,
+    ECO2MIX_API_BASE_URL,
+    ECO2MIX_API_PARAMS,
+    MIN_ROWS_THRESHOLD,
+)
+
+
+def build_api_url():
+    """Construct the API URL with query parameters."""
+    params = "&".join([f"{k}={v}" for k, v in ECO2MIX_API_PARAMS.items()])
+    return f"{ECO2MIX_API_BASE_URL}?{params}"
+
+
+def normalize_column_names(col_name):
+    """Normalize column names to lowercase with underscores."""
+    return (
+        col_name.lower()
+        .strip()
+        .replace("(", "")
+        .replace(")", "")
+        .replace(" %", "")
+        .replace(" - ", "_")
+        .replace(" ", "_")
+    )
+
 
 @dag(
     dag_id="process-energy",
@@ -20,67 +45,98 @@ from sqlalchemy.exc import SQLAlchemyError
     catchup=False,
     dagrun_timeout=datetime.timedelta(minutes=60),
 )
-
 def process_energy_data():
-
     @task()
     def extract_data():
-        @asyncio.coroutine
-        def get_csv():
-            url_csv = fr'https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-tr/exports/csv?lang=fr&refine=date_heure%3A%222024%22&facet=facet(name%3D%22libelle_region%22%2C%20disjunctive%3Dtrue)&timezone=Europe%2FBerlin&use_labels=true&delimiter=%3B'
-            start = time.time()
+        """Extract energy data from the ECO2MIX API."""
+        url_csv = build_api_url()
+        start = time.time()
 
-            #response = urllib.request.urlopen(url_csv)
-            #df = csv.reader(response, delimiter=';')
-            df = pd.read_csv(url_csv, sep=';')
-            end = time.time()
-            print("difference: ", f"{(end - start) / 60}")
-            return df
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(get_csv())
-        return result
+        df = pd.read_csv(url_csv, sep=";")
+        end = time.time()
+        
+        elapsed_minutes = (end - start) / 60
+        print(f"Data extraction completed in {elapsed_minutes:.2f} minutes")
+        
+        # Validate minimum data threshold
+        if len(df) < MIN_ROWS_THRESHOLD:
+            raise ValueError(
+                f"Insufficient data: received {len(df)} rows, "
+                f"expected at least {MIN_ROWS_THRESHOLD}"
+            )
+        
+        return df
 
     @task()
     def transform(df):
-        df.columns = df.columns.map(lambda x: x.lower().strip().replace("(", "").replace(")", "").replace(" %", "") \
-                                    .replace(" - ", "_").replace(" ", "_"))
-        df = df[['région', 'date_heure', 'thermique_mw', 'nucléaire_mw', 'eolien_mw', 'solaire_mw',
-                'hydraulique_mw', 'pompage_mw', 'bioénergies_mw']]
+        """Transform raw energy data into normalized format."""
+        # Normalize column names
+        df.columns = df.columns.map(normalize_column_names)
+        
+        # Select required columns
+        df = df[RAW_COLUMNS]
+        
+        # Convert date column to datetime
         df.loc[:, "date_heure"] = pd.to_datetime(df["date_heure"])
-        df.rename({'région': 'region'}, axis=1, inplace=True)
-        df_normalized = pd.melt(df, id_vars=['date_heure', 'region'],
-                                value_vars=['thermique_mw', 'nucléaire_mw', 'eolien_mw', 'solaire_mw',
-                                            'hydraulique_mw', 'pompage_mw', 'bioénergies_mw'],
-                                value_name='consommation',
-                                var_name='filiere')
-        df_normalized = df_normalized.loc[(df_normalized['filiere'].isin(['eolien_mw', 'solaire_mw','hydraulique_mw'])), :]        
+        
+        # Rename région to region for consistency
+        df.rename({"région": "region"}, axis=1, inplace=True)
+        
+        # Normalize data: unpivot energy sources into a single column
+        df_normalized = pd.melt(
+            df,
+            id_vars=["date_heure", "region"],
+            value_vars=ENERGY_SOURCES,
+            value_name="consommation",
+            var_name="filiere",
+        )
+        
+        # Filter to renewable sources only
+        df_normalized = df_normalized.loc[
+            df_normalized["filiere"].isin(RENEWABLE_SOURCES), :
+        ]
+        
         return df_normalized
-    
+
     @task()
     def load(data):
-        engine = sqlalchemy.create_engine('postgresql+psycopg2://airflow:airflow@postgres:5432/airflow')
-        create_schema_sql = """ CREATE SCHEMA IF NOT EXISTS energy"""
-        engine.execute(create_schema_sql)
+        """Load transformed data into PostgreSQL database."""
+        db_url = os.getenv(
+            "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN",
+            "postgresql+psycopg2://airflow:airflow@postgres:5432/airflow",
+        )
+        engine = sqlalchemy.create_engine(db_url)
 
         try:
-            engine.connect()
+            # Create schema if it doesn't exist
+            with engine.connect() as conn:
+                conn.execute(
+                    sqlalchemy.text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA}")
+                )
+                conn.commit()
+
+            # Load data into database
             data.to_sql(
-                name='eco_to_mix',
+                name=DB_TABLE,
                 con=engine,
-                schema='energy',
-                if_exists='replace',
+                schema=DB_SCHEMA,
+                if_exists="replace",
                 index=False,
-                method='multi',
+                method="multi",
                 chunksize=100000,
             )
-            engine.dispose()
-            print(f"Storage of energy data completed !!!")
+            
+            print(f"Storage of energy data completed to {DB_SCHEMA}.{DB_TABLE}!")
 
         except SQLAlchemyError as e:
             raise e
+        finally:
+            engine.dispose()
+
+    # DAG workflow
     df = extract_data()
     data = transform(df)
     load(data)
 
-process_energy_data()
 
+process_energy_data()
