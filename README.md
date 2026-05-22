@@ -166,13 +166,11 @@ This dashboard provides:
 ```
 etl-pipeline-energy-data/
 ├── dags/                    # Airflow DAG definitions
-├── src/                     # ETL transformation logic
-│   ├── extractors/         # Data extraction modules
-│   ├── transformers/       # Data transformation logic
-│   └── loaders/            # Database loading modules
-├── docker/                 # Docker configuration files
+├── src/                     # Python application code
+│   └── app.py              # Main application logic
+├── config/                 # Configuration files
 ├── assets/                 # Documentation and diagrams
-├── docker-compose.yml      # Service orchestration
+├── docker-compose.yaml     # Service orchestration
 ├── Dockerfile              # Image build configuration
 ├── requirements.txt        # Python dependencies
 └── README.md              # This file
@@ -201,7 +199,7 @@ docker-compose logs postgres
 
 ### Issue: Port already in use (8080, 8000)
 
-**Solution:** Stop conflicting services or modify the `docker-compose.yml` port mappings.
+**Solution:** Stop conflicting services or modify the `docker-compose.yaml` port mappings.
 
 ### Issue: Out of memory errors
 
