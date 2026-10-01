@@ -1,8 +1,42 @@
-# python build artifacts
-__pycache__
-*.pyc
-dist
-*.egg-info
+# Git
+.git
+.gitignore
+.github
 
-plugins/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment files
+.env
+.env.*
+
+# Logs
 logs/
+
+# Packaging
+build/
+dist/
+*.egg-info/
