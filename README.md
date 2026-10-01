@@ -6,7 +6,7 @@ A production-ready ETL pipeline that automatically extracts energy mix data from
 
 This project is an end-to-end workflow which aims to query ECO2mix data on a regular basis, process it by applying multiple transformations, store it in a PostgreSQL database, and load the data to a visualization dashboard.
 
-ECO2mix is a dataset refreshed once per hour, presenting "real-time" regional data from the eCO2mix application. The data comes from telemetry of the structures, supplemented by packages and estimates.
+ECO2mix is a dataset refreshed hourly, presenting regional data from the eCO2mix application. The data comes from telemetry of the structures, supplemented by packages and estimates. The data is collected every 15 minutes and stored as a history that accumulates from the first successful DAG run.
 
 **Data available every 15 minutes:**
 - Production according to different sectors composing the energy mix
@@ -19,10 +19,31 @@ For more information, visit the [ECO2mix Open Data Portal](https://odre.opendata
 
 - ✅ **Automated scheduling** using Apache Airflow
 - ✅ **Data validation** and transformation pipelines
-- ✅ **Real-time visualization** dashboard
+- ✅ **Refreshed hourly dashboard** with time-window filtering
 - ✅ **Containerized deployment** with Docker
-- ✅ **PostgreSQL** data storage
+- ✅ **PostgreSQL** data storage with idempotent upserts
 - ✅ **Scalable architecture** for production use
+
+## Data model
+
+The target table is created once and then updated with an upsert on the natural key `(date_heure, region, filiere)`.
+
+```sql
+CREATE TABLE IF NOT EXISTS energy.eco_to_mix (
+    date_heure TIMESTAMPTZ NOT NULL,
+    region TEXT NOT NULL,
+    filiere TEXT NOT NULL,
+    consommation DOUBLE PRECISION,
+    PRIMARY KEY (date_heure, region, filiere)
+);
+
+CREATE INDEX IF NOT EXISTS idx_eco_to_mix_region_date_heure
+    ON energy.eco_to_mix (region, date_heure);
+```
+
+History accumulates from the first DAG run. Rows are upserted on `(date_heure, region, filiere)` so the dataset can be refreshed hourly without creating duplicates. The data source covers only a recent window, so older values are not backfilled by this pipeline.
+
+If a legacy table created by the earlier replace-based workflow still exists without the primary key, recreate it once with the SQL above. Because the pipeline reloads the current source window on each run, a drop-and-recreate migration is acceptable.
 
 ## Project Stack and Architecture
 
@@ -155,11 +176,14 @@ Once the DAG has run successfully, view the processed data:
 http://localhost:8000
 ```
 
-This dashboard provides:
-- Real-time energy production data
-- Regional energy mix breakdown
-- Historical trends and analysis
-- Interactive filtering and exploration
+The dashboard now:
+- queries PostgreSQL with a region filter and a selected date range in the SQL `WHERE` clause
+- defaults to the last 7 days
+- supports the `Last 24h`, `Last 7 days`, and `Last 30 days` selectors
+- refreshes automatically every hour without reloading the page
+- aggregates hourly in SQL when the selected period exceeds 30 days to keep the chart readable
+
+The region dropdown and area chart remain available for interactive use.
 
 ## Project Structure
 
@@ -167,7 +191,9 @@ This dashboard provides:
 etl-pipeline-energy-data/
 ├── dags/                    # Airflow DAG definitions
 ├── src/                     # Python application code
-│   └── app.py              # Main application logic
+│   ├── app.py              # Dashboard app logic
+│   ├── data_utils.py      # Timestamp and upsert preparation helpers
+│   └── dashboard_data.py   # SQL query builders for filtered chart data
 ├── config/                 # Configuration files
 ├── assets/                 # Documentation and diagrams
 ├── docker-compose.yaml     # Service orchestration
@@ -221,4 +247,4 @@ Released under the [MIT License](LICENSE.txt)
 
 ---
 
-**Last Updated:** 2026-05-22
+**Last Updated:** 2026-10-01

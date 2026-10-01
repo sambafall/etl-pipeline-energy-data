@@ -1,32 +1,49 @@
 import os
+from datetime import datetime
+
 import dash
-from dash import dcc, html
+import pandas as pd
 import plotly.express as px
 import sqlalchemy
-import pandas as pd
+from dash import Input, Output, dcc, html
 
 from config.constants import DB_SCHEMA, DB_TABLE
+from src.dashboard_data import build_history_query, get_period_bounds
 
-# Database configuration
 DB_URL = os.getenv(
     "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN",
     "postgresql+psycopg2://airflow:airflow@postgres:5432/airflow",
 )
 engine = sqlalchemy.create_engine(DB_URL)
 
-# Query data from database
-query = f"""
-    SELECT *
-    FROM {DB_SCHEMA}.{DB_TABLE}
-    ORDER BY date_heure DESC
-"""
+PERIOD_OPTIONS = [
+    {"label": "Last 24h", "value": "24h"},
+    {"label": "Last 7 days", "value": "7d"},
+    {"label": "Last 30 days", "value": "30d"},
+]
 
-df = pd.read_sql(query, con=engine)
 
-# Rename column for consistency
-df.rename({"région": "region"}, axis=1, inplace=True)
+def fetch_regions():
+    query = f"SELECT DISTINCT region FROM {DB_SCHEMA}.{DB_TABLE} ORDER BY region"
+    with engine.connect() as conn:
+        result = pd.read_sql(sqlalchemy.text(query), conn)
+    return result["region"].tolist()
 
-# Application initialization
+
+def fetch_history(selected_region=None, period_value="7d"):
+    start_time, end_time = get_period_bounds(period_value, datetime.utcnow())
+    aggregate = period_value == "30d"
+    query = build_history_query(
+        f"{DB_SCHEMA}.{DB_TABLE}",
+        region=selected_region,
+        start_date=start_time.isoformat(),
+        end_date=end_time.isoformat(),
+        aggregate_hours=aggregate,
+    )
+    with engine.connect() as conn:
+        return pd.read_sql(sqlalchemy.text(query), conn)
+
+
 external_stylesheets = ["https://codepen.io/chriddyp/pen/bWLwgP.css"]
 
 app = dash.Dash(
@@ -34,36 +51,63 @@ app = dash.Dash(
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
     external_stylesheets=external_stylesheets,
 )
-
 server = app.server
-
-# Color theme
 colors = {"background": "#FFFFFF", "text": "#082255"}
 
-# Application layout
+try:
+    regions = fetch_regions()
+except Exception:
+    regions = []
+initial_region = regions[0] if regions else None
+
 app.layout = html.Div(
     children=[
         html.H1(
-            children="Real-time Renewable Energy Consumption and Production by Region",
+            children="Renewable Energy Consumption and Production by Region",
             style={"textAlign": "center", "color": colors["text"]},
         ),
-        dcc.Dropdown(
-            df.region.unique(),
-            df.region.unique()[0],  # Default to first region
-            id="dropdown-selection",
+        html.Div(
+            [
+                dcc.Dropdown(
+                    regions,
+                    initial_region,
+                    id="dropdown-selection",
+                    clearable=False,
+                ),
+                dcc.Dropdown(
+                    PERIOD_OPTIONS,
+                    "7d",
+                    id="period-selector",
+                    clearable=False,
+                ),
+            ],
+            style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "12px"},
         ),
+        dcc.Interval(id="refresh-interval", interval=60 * 60 * 1000, n_intervals=0),
         dcc.Graph(id="graph-content"),
     ]
 )
 
 
 @app.callback(
-    dash.dependencies.Output("graph-content", "figure"),
-    dash.dependencies.Input("dropdown-selection", "value"),
+    Output("graph-content", "figure"),
+    Input("dropdown-selection", "value"),
+    Input("period-selector", "value"),
+    Input("refresh-interval", "n_intervals"),
 )
-def update_graph(selected_region):
-    """Update graph based on selected region."""
-    filtered_df = df[df.region == selected_region]
+def update_graph(selected_region, selected_period, _n_intervals):
+    """Refresh the area chart based on the selected region and period."""
+    if not selected_region:
+        return px.area(title="No region selected")
+
+    try:
+        filtered_df = fetch_history(selected_region=selected_region, period_value=selected_period)
+    except Exception:
+        return px.area(title="Unable to load the latest energy history")
+
+    if filtered_df.empty:
+        return px.area(title=f"No data available for {selected_region} in the selected period")
+
     return px.area(
         filtered_df,
         x="date_heure",
